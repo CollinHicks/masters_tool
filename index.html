@@ -7,20 +7,43 @@
 <style>
 [hidden]{display:none!important}
 body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f3f4f6;color:#1f2328;margin:0}
-main{max-width:980px;margin:0 auto;padding:20px 16px 40px}
+main{max-width:1320px;margin:0 auto;padding:20px 16px 40px}
 h1{font-size:22px;margin:0 0 16px}
 h2{font-size:15px;margin:0 0 10px}
-section{background:#fff;border:1px solid #d5d9de;border-radius:4px;padding:14px 16px;margin-bottom:14px}
-select,input[type=number],button{font:inherit;padding:6px 8px;border:1px solid #aab0b8;border-radius:4px;background:#fff;color:inherit}
+section,details.sec,aside{background:#fff;border:1px solid #d5d9de;border-radius:4px;padding:14px 16px;margin-bottom:14px}
+details.sec>summary{font-size:15px;font-weight:600;cursor:pointer}
+details.sec>.body{margin-top:10px}
+select,input[type=number],input[type=search],button,summary.ms{font:inherit;padding:6px 8px;border:1px solid #aab0b8;border-radius:4px;background:#fff;color:inherit}
 button{cursor:pointer}
-button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #1a56c4;outline-offset:1px}
+button:focus-visible,select:focus-visible,input:focus-visible,summary:focus-visible{outline:2px solid #1a56c4;outline-offset:1px}
 .frow,.opts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
 .frow{margin-bottom:8px}
 .opts{gap:16px;align-items:flex-end}
-label{display:flex;flex-direction:column;gap:3px;font-size:13px;color:#4a5159}
+label,.fld{display:flex;flex-direction:column;gap:3px;font-size:13px;color:#4a5159}
 label.check{flex-direction:row;align-items:center;gap:6px;font-size:15px;color:inherit;padding-bottom:7px}
 #none{margin:0 0 8px;color:#4a5159}
 #chartwrap{position:relative;height:460px}
+.layout{display:flex;gap:16px;align-items:flex-start}
+.col{flex:1;min-width:0}
+aside{width:320px;flex:none;position:sticky;top:12px;max-height:calc(100vh - 24px);overflow:auto;box-sizing:border-box;margin-bottom:0}
+aside h2{margin-bottom:4px}
+aside p{margin:0 0 8px;font-size:13px;color:#4a5159}
+aside input[type=search]{width:100%;box-sizing:border-box;margin-bottom:8px}
+#legend details{border-top:1px solid #e6e8eb;padding:6px 0 6px 8px;border-left:3px solid transparent}
+#legend details.used{border-left-color:#2f6fdb}
+#legend summary{cursor:pointer}
+#legend details.used>summary{font-weight:600}
+#legend small{display:block;color:#6a717a;font-size:12px;font-weight:400}
+#legend .desc{font-size:13px;color:#2f353b;padding:6px 0 2px}
+details.multi{position:relative}
+summary.ms{list-style:none;cursor:pointer;min-width:150px;padding-right:24px;position:relative;white-space:nowrap}
+summary.ms::-webkit-details-marker{display:none}
+summary.ms::after{content:"▾";position:absolute;right:8px;color:#6a717a}
+.mbody{position:absolute;z-index:10;top:100%;left:0;margin-top:2px;min-width:100%;width:max-content;max-width:320px;max-height:280px;overflow:auto;background:#fff;border:1px solid #aab0b8;border-radius:4px;box-shadow:0 4px 12px rgba(0,0,0,.15);box-sizing:border-box}
+.mtools{display:flex;gap:6px;padding:6px 8px;border-bottom:1px solid #e6e8eb;position:sticky;top:0;background:#fff}
+.mtools button{padding:2px 8px;font-size:13px}
+label.opt{flex-direction:row;align-items:center;gap:6px;font-size:14px;color:inherit;padding:4px 8px;cursor:pointer}
+@media(max-width:900px){.layout{flex-direction:column}aside{width:100%;position:static;max-height:none}}
 </style>
 </head>
 <body>
@@ -31,17 +54,24 @@ label.check{flex-direction:row;align-items:center;gap:6px;font-size:15px;color:i
 <p>The data file could not be loaded automatically. Select the spreadsheet (.xlsx) to continue.</p>
 <input type="file" id="file" accept=".xlsx,.xls">
 </section>
-<div id="app" hidden>
+<div id="app" class="layout" hidden>
+<div class="col">
 <section>
 <h2>Filter</h2>
 <p id="none">No filters. All injury records are included.</p>
 <div id="filters"></div>
 <button id="add">+ Add filter</button>
 </section>
+<details class="sec" open>
+<summary>Group by<span id="gsum"></span></summary>
+<div class="body opts">
+<label>Group by<select id="group"></select></label>
+<div class="fld" id="gshowL"><span>Groups to show</span><span id="gshow"></span></div>
+</div>
+</details>
 <section>
 <h2>Chart</h2>
 <div class="opts">
-<label>Group by<select id="group"></select></label>
 <label>Show<select id="measure"></select></label>
 <label>Chart type
 <select id="type">
@@ -56,9 +86,16 @@ label.check{flex-direction:row;align-items:center;gap:6px;font-size:15px;color:i
 </div>
 </section>
 <section>
-<p id="empty" hidden>No records match these filters.</p>
+<p id="empty" hidden></p>
 <div id="chartwrap"><canvas id="chart"></canvas></div>
 </section>
+</div>
+<aside>
+<h2>Variable guide</h2>
+<p>What each variable means. Variables you are using are highlighted.</p>
+<input type="search" id="q" placeholder="Search variables">
+<div id="legend"></div>
+</aside>
 </div>
 </main>
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
@@ -79,11 +116,11 @@ const NAMES={
   C_Concussion_Time:'Concussion: symptom resolution time'
 };
 const PALETTE=['#2f6fdb','#e8743b','#19a979','#945ecf','#13a4b4','#c94f7c','#8c8c8c','#d6b400','#5a6ee0','#b5651d','#3aa655','#e04b4b','#7d6b5a','#4aa3df'];
-const OPS_CAT=[['is','is'],['not','is not']];
+const OPS_CAT=[['in','is one of'],['out','is not one of']];
 const OPS_NUM=[['=','equal to'],['>','greater than'],['>=','greater than or equal to'],['<','less than'],['<=','less than or equal to']];
 const SYM={'=':'=','>':'>','>=':'≥','<':'<','<=':'≤'};
 
-let rows=[],V={},filters=[],chart=null;
+let rows=[],V={},filters=[],chart=null,gsel=new Set(),usedKey='';
 const $=id=>document.getElementById(id);
 const key=v=>v===null||v===undefined||v===''?'':String(v);
 const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
@@ -114,7 +151,7 @@ function buildVar(name,d){
     const x=Number(a),y=Number(b);
     return isNaN(x)||isNaN(y)?a.localeCompare(b):x-y;
   });
-  return {name,label:NAMES[name]||pretty(name),numeric,labels,codeLike,keys,min:numeric?Math.min(...nn):0};
+  return {name,desc,label:NAMES[name]||pretty(name),numeric,labels,codeLike,keys,min:numeric?Math.min(...nn):0};
 }
 
 function init(buf){
@@ -129,13 +166,15 @@ function init(buf){
   Object.keys(rows[0]).filter(c=>!/^Record_UID/.test(c)).forEach(c=>{V[c]=buildVar(c,info[c]);});
   filters=[];
   const vars=varOpts();
-  fill($('group'),vars,V.Sport?'Sport':vars[0][0]);
+  fill($('group'),[['none','None']].concat(vars),V.Sport?'Sport':'none');
   const ms=[['count','Number of injuries']];
   Object.values(V).filter(v=>v.numeric).forEach(v=>{
     ms.push(['avg:'+v.name,'Average '+v.label.toLowerCase()]);
     ms.push(['sum:'+v.name,'Total '+v.label.toLowerCase()]);
   });
   fill($('measure'),ms,'count');
+  buildLegend();
+  renderGroupSel();
   renderFilters();
   $('status').hidden=true;
   $('loader').hidden=true;
@@ -160,9 +199,54 @@ function sel(opts,val,fn){
   return s;
 }
 
+function multi(keys,labelFn,selected,onChange,emptyText,allText){
+  const d=document.createElement('details');
+  d.className='multi';
+  const s=document.createElement('summary');
+  s.className='ms';
+  const body=document.createElement('div');
+  body.className='mbody';
+  const tools=document.createElement('div');
+  tools.className='mtools';
+  const boxes=[];
+  const upd=()=>{
+    const n=selected.size;
+    s.textContent=n===0?emptyText:(allText&&n===keys.length)?allText:n<=2?keys.filter(k=>selected.has(k)).map(labelFn).join(', '):n+' selected';
+  };
+  const setAll=on=>{
+    selected.clear();
+    if(on)keys.forEach(k=>selected.add(k));
+    boxes.forEach(b=>{b.checked=on;});
+    upd();
+    onChange();
+  };
+  [['All',true],['Clear',false]].forEach(([t,on])=>{
+    const b=document.createElement('button');
+    b.type='button';
+    b.textContent=t;
+    b.onclick=()=>setAll(on);
+    tools.append(b);
+  });
+  body.append(tools);
+  keys.forEach(k=>{
+    const l=document.createElement('label');
+    l.className='opt';
+    const c=document.createElement('input');
+    c.type='checkbox';
+    c.checked=selected.has(k);
+    c.onchange=()=>{if(c.checked)selected.add(k);else selected.delete(k);upd();onChange();};
+    boxes.push(c);
+    l.append(c,document.createTextNode(labelFn(k)));
+    body.append(l);
+  });
+  d.append(s,body);
+  upd();
+  return d;
+}
+
 function newFilter(name){
   const vr=V[name];
-  return vr.numeric?{v:name,op:'>=',val:String(vr.min)}:{v:name,op:'is',val:vr.keys[0]};
+  return vr.numeric?{v:name,op:'>=',val:String(vr.min)}:{v:name,op:'in',sel:new Set()};
 }
 
 function renderFilters(){
@@ -182,7 +266,7 @@ function renderFilters(){
       inp.oninput=()=>{f.val=inp.value;draw();};
       row.append(inp);
     }else{
-      row.append(sel(vr.keys.map(k=>[k,show(vr,k)]),f.val,x=>{f.val=x;draw();}));
+      row.append(multi(vr.keys,k=>show(vr,k),f.sel,draw,'Select values…'));
     }
     const b=document.createElement('button');
     b.textContent='Remove';
@@ -192,22 +276,81 @@ function renderFilters(){
   });
 }
 
+function renderGroupSel(){
+  const box=$('gshow');
+  box.innerHTML='';
+  const gv=$('group').value;
+  $('gshowL').hidden=gv==='none';
+  if(gv==='none')return;
+  const g=V[gv];
+  gsel=new Set(g.keys);
+  box.append(multi(g.keys,k=>show(g,k),gsel,draw,'None selected','All'));
+}
+
+function buildLegend(){
+  const box=$('legend');
+  box.innerHTML='';
+  varOpts().forEach(([n])=>{
+    const v=V[n];
+    const d=document.createElement('details');
+    d.dataset.var=n;
+    d.dataset.text=(v.label+' '+n+' '+v.desc).toLowerCase();
+    const s=document.createElement('summary');
+    s.textContent=v.label;
+    const sm=document.createElement('small');
+    sm.textContent=n;
+    s.append(sm);
+    const body=document.createElement('div');
+    body.className='desc';
+    if(!v.desc)body.textContent='No description in the spreadsheet.';
+    else if(v.desc.includes('='))v.desc.split(';').forEach(p=>{
+      const x=document.createElement('div');
+      x.textContent=p.trim();
+      body.append(x);
+    });
+    else body.textContent=v.desc;
+    d.append(s,body);
+    box.append(d);
+  });
+  usedKey='';
+}
+
+function markUsed(){
+  const used=new Set(filters.map(f=>f.v));
+  if($('group').value!=='none')used.add($('group').value);
+  const k=[...used].sort().join('|');
+  if(k===usedKey)return;
+  usedKey=k;
+  document.querySelectorAll('#legend details').forEach(d=>{
+    const u=used.has(d.dataset.var);
+    d.classList.toggle('used',u);
+    if(u)d.open=true;
+  });
+}
+
+function isActive(f){
+  return V[f.v].numeric?f.val!==''&&!isNaN(Number(f.val)):f.sel.size>0;
+}
+
 function pass(r){
   return filters.every(f=>{
+    if(!isActive(f))return true;
     const vr=V[f.v],raw=r[f.v];
     if(vr.numeric){
-      if(f.val===''||isNaN(Number(f.val)))return true;
       if(raw===null||raw==='')return false;
       const x=Number(f.val);
       return f.op==='='?raw===x:f.op==='>'?raw>x:f.op==='>='?raw>=x:f.op==='<'?raw<x:raw<=x;
     }
-    return f.op==='is'?key(raw)===f.val:key(raw)!==f.val;
+    return f.sel.has(key(raw))===(f.op==='in');
   });
 }
 
 function describe(f){
   const vr=V[f.v];
-  return vr.numeric?`${vr.label} ${SYM[f.op]} ${f.val===''?'?':f.val}`:`${vr.label} ${f.op==='is'?'is':'is not'} ${show(vr,f.val)}`;
+  if(vr.numeric)return `${vr.label} ${SYM[f.op]} ${f.val}`;
+  const ks=vr.keys.filter(k=>f.sel.has(k));
+  const t=ks.length>4?ks.length+' selected values':ks.map(k=>show(vr,k)).join(' or ');
+  return `${vr.label} ${f.op==='in'?'is':'is not'} ${t}`;
 }
 
 const valueLabels={
@@ -230,35 +373,50 @@ const valueLabels={
 
 function draw(){
   if(chart){chart.destroy();chart=null;}
-  const g=V[$('group').value],mv=$('measure').value,type=$('type').value;
+  markUsed();
+  const gv=$('group').value,g=gv==='none'?null:V[gv];
+  $('gsum').textContent=': '+(g?g.label:'None');
+  const mv=$('measure').value,type=$('type').value;
   const [fn,col]=mv.split(':');
-  const sel=rows.filter(pass);
-  $('empty').hidden=sel.length>0;
-  $('chartwrap').hidden=sel.length===0;
-  if(!sel.length)return;
+  const rec=rows.filter(pass);
+  const pie=type==='pie'||type==='doughnut';
 
-  const agg=new Map(g.keys.map(k=>[k,{n:0,s:0,c:0}]));
-  sel.forEach(r=>{
-    const a=agg.get(key(r[g.name]));
+  const agg=new Map((g?g.keys:['all']).map(k=>[k,{n:0,s:0,c:0}]));
+  rec.forEach(r=>{
+    const a=agg.get(g?key(r[g.name]):'all');
     a.n++;
     if(col&&typeof r[col]==='number'){a.s+=r[col];a.c++;}
   });
-  const pie=type==='pie'||type==='doughnut';
   let items=[...agg].map(([k,a])=>({k,n:a.n,v:fn==='count'?a.n:fn==='sum'?a.s:(a.c?a.s/a.c:null)}));
-  items=items.filter(i=>i.n>0||(!pie&&g.keys.length<=15&&i.k!==''));
+  if(g){
+    const partial=gsel.size<g.keys.length;
+    items=items.filter(i=>gsel.has(i.k)&&(i.n>0||(!pie&&i.k!==''&&(partial||g.keys.length<=15))));
+  }else items=items.filter(i=>i.n>0);
   if(pie)items=items.filter(i=>i.v);
   if($('sort').checked)items.sort((a,b)=>(b.v===null?-Infinity:b.v)-(a.v===null?-Infinity:a.v));
 
+  $('chartwrap').hidden=!items.length;
+  $('empty').hidden=items.length>0;
+  if(!items.length){
+    $('empty').textContent=rec.length?'No groups selected.':'No records match these filters.';
+    return;
+  }
+
   const mlabel=$('measure').selectedOptions[0].textContent;
-  let labels=items.map(i=>show(g,i.k));
+  let labels=items.map(i=>g?show(g,i.k):'All matching records');
   const data=items.map(i=>i.v===null?null:Math.round(i.v*10)/10);
   if(pie){
     const total=data.reduce((a,b)=>a+b,0);
     labels=labels.map((l,i)=>`${l}: ${fmt(data[i])} (${Math.round(data[i]/total*100)}%)`);
   }
 
-  const sub=filters.length?filters.map((f,i)=>(i?'and ':'Where ')+describe(f)):['All records'];
-  sub.push('n = '+sel.length);
+  const act=filters.filter(isActive);
+  const sub=act.length?act.map((f,i)=>(i?'and ':'Where ')+describe(f)):['All records'];
+  if(g&&gsel.size<g.keys.length){
+    const nm=g.keys.filter(k=>gsel.has(k)).map(k=>show(g,k));
+    sub.push(nm.length<=4?'Groups shown: '+nm.join(', '):`Groups shown: ${nm.length} of ${g.keys.length}`);
+  }
+  sub.push('n = '+items.reduce((a,i)=>a+i.n,0));
 
   const horiz=type==='hbar';
   const t=horiz?'bar':type;
@@ -267,7 +425,7 @@ function draw(){
 
   const scales={};
   if(!pie){
-    scales[cat]={title:{display:true,text:g.label}};
+    if(g)scales[cat]={title:{display:true,text:g.label}};
     scales[val]={beginAtZero:true,title:{display:true,text:mlabel},ticks:fn==='count'?{precision:0}:{}};
   }
   chart=new Chart($('chart'),{
@@ -289,7 +447,7 @@ function draw(){
       layout:{padding:{top:pie?0:22,right:pie?0:36}},
       plugins:{
         legend:{display:pie,position:'right',labels:{font:{size:13}}},
-        title:{display:true,text:`${mlabel} by ${g.label.toLowerCase()}`,font:{size:17}},
+        title:{display:true,text:g?`${mlabel} by ${g.label.toLowerCase()}`:mlabel,font:{size:17}},
         subtitle:{display:true,text:sub,font:{size:12},padding:{bottom:12}},
         tooltip:{enabled:true}
       },
@@ -299,12 +457,20 @@ function draw(){
   });
 }
 
-['group','measure','type','sort'].forEach(id=>$(id).addEventListener('change',draw));
+['measure','type','sort'].forEach(id=>$(id).addEventListener('change',draw));
+$('group').addEventListener('change',()=>{renderGroupSel();draw();});
 $('add').onclick=()=>{
   filters.push(newFilter(V.Injury_or_Illness_Code?'Injury_or_Illness_Code':varOpts()[0][0]));
   renderFilters();
   draw();
 };
+$('q').oninput=()=>{
+  const q=$('q').value.trim().toLowerCase();
+  document.querySelectorAll('#legend details').forEach(d=>{d.hidden=q!==''&&!d.dataset.text.includes(q);});
+};
+document.addEventListener('click',e=>{
+  document.querySelectorAll('details.multi[open]').forEach(d=>{if(!d.contains(e.target))d.open=false;});
+});
 
 function fail(e){
   $('status').hidden=false;
