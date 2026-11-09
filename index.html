@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Injury Data Explorer</title>
+<style>
+[hidden]{display:none!important}
+body{font-family:system-ui,-apple-system,"Segoe UI",sans-serif;background:#f3f4f6;color:#1f2328;margin:0}
+main{max-width:980px;margin:0 auto;padding:20px 16px 40px}
+h1{font-size:22px;margin:0 0 16px}
+h2{font-size:15px;margin:0 0 10px}
+section{background:#fff;border:1px solid #d5d9de;border-radius:4px;padding:14px 16px;margin-bottom:14px}
+select,input[type=number],button{font:inherit;padding:6px 8px;border:1px solid #aab0b8;border-radius:4px;background:#fff;color:inherit}
+button{cursor:pointer}
+button:focus-visible,select:focus-visible,input:focus-visible{outline:2px solid #1a56c4;outline-offset:1px}
+.frow,.opts{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.frow{margin-bottom:8px}
+.opts{gap:16px;align-items:flex-end}
+label{display:flex;flex-direction:column;gap:3px;font-size:13px;color:#4a5159}
+label.check{flex-direction:row;align-items:center;gap:6px;font-size:15px;color:inherit;padding-bottom:7px}
+#none{margin:0 0 8px;color:#4a5159}
+#chartwrap{position:relative;height:460px}
+</style>
+</head>
+<body>
+<main>
+<h1>Injury Data Explorer</h1>
+<p id="status">Loading data…</p>
+<section id="loader" hidden>
+<p>The data file could not be loaded automatically. Select the spreadsheet (.xlsx) to continue.</p>
+<input type="file" id="file" accept=".xlsx,.xls">
+</section>
+<div id="app" hidden>
+<section>
+<h2>Filter</h2>
+<p id="none">No filters. All injury records are included.</p>
+<div id="filters"></div>
+<button id="add">+ Add filter</button>
+</section>
+<section>
+<h2>Chart</h2>
+<div class="opts">
+<label>Group by<select id="group"></select></label>
+<label>Show<select id="measure"></select></label>
+<label>Chart type
+<select id="type">
+<option value="bar">Bar (vertical)</option>
+<option value="hbar">Bar (horizontal)</option>
+<option value="line">Line</option>
+<option value="pie">Pie</option>
+<option value="doughnut">Doughnut</option>
+</select>
+</label>
+<label class="check"><input type="checkbox" id="sort">Largest first</label>
+</div>
+</section>
+<section>
+<p id="empty" hidden>No records match these filters.</p>
+<div id="chartwrap"><canvas id="chart"></canvas></div>
+</section>
+</div>
+</main>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.js"></script>
+<script>
+const DATA_FILE='synthetic_athletic_injury_dataset_1000.xlsx';
+const ORDER={Class_Year:['Freshman','Sophomore','Junior','Senior','Graduate']};
+const NAMES={
+  Injury_or_Illness_Code:'Injury or illness',
+  Inj_Ill_Group_Code:'Diagnosis group',
+  Bodypart_or_System_Code:'Body part or system',
+  PRIMARY_DIV:'Primary division',
+  SPORT_DIV:'Sport division',
+  SPORT_SUBDIVISION:'Football subdivision',
+  School_ID:'School',
+  TimeLoss:'Days lost',
+  Injev_SegEvent:'Segment of practice/competition',
+  C_Concussion_Time:'Concussion: symptom resolution time'
+};
+const PALETTE=['#2f6fdb','#e8743b','#19a979','#945ecf','#13a4b4','#c94f7c','#8c8c8c','#d6b400','#5a6ee0','#b5651d','#3aa655','#e04b4b','#7d6b5a','#4aa3df'];
+const OPS_CAT=[['is','is'],['not','is not']];
+const OPS_NUM=[['=','equal to'],['>','greater than'],['>=','greater than or equal to'],['<','less than'],['<=','less than or equal to']];
+const SYM={'=':'=','>':'>','>=':'≥','<':'<','<=':'≤'};
+
+let rows=[],V={},filters=[],chart=null;
+const $=id=>document.getElementById(id);
+const key=v=>v===null||v===undefined||v===''?'':String(v);
+const cap=s=>s.charAt(0).toUpperCase()+s.slice(1);
+const fmt=v=>(Math.round(v*10)/10).toLocaleString();
+const pretty=n=>cap(n.replace(/^Injev_/,'').replace(/^C_/,'Concussion: ').replace(/_Code$/,'').replace(/_/g,' ').toLowerCase());
+const show=(vr,k)=>k===''?'(blank)':vr.labels[k]!==undefined?vr.labels[k]:vr.codeLike?'Code '+k:k;
+
+function buildVar(name,d){
+  d=d||{};
+  const desc=String(d.Illustrative_Values_or_Description||'');
+  const labels={};
+  desc.split(';').forEach(p=>{
+    const m=p.match(/^\s*(-?\d+)\s*=\s*(.+?)\s*$/);
+    if(m)labels[m[1]]=cap(m[2].replace(/\s*\(illustrative\)/i,''));
+  });
+  const c=desc.match(/(\d+) assigned to synthetic (\w+) records/i);
+  if(c)labels[c[1]]=cap(c[2]);
+  const nn=rows.map(r=>r[name]).filter(v=>v!==null&&v!=='');
+  const allNum=nn.length>0&&nn.every(v=>typeof v==='number');
+  const hasLabels=Object.keys(labels).length>0;
+  const numeric=allNum&&!hasLabels&&(d.Variable?/numeric/i.test(d.Data_Type||'')&&!/categor|code|ordinal|identifier/i.test(desc):new Set(nn).size>12);
+  const codeLike=!numeric&&allNum&&/categor|code|ordinal/i.test(desc)&&!/identifier/i.test(desc);
+  const o=ORDER[name];
+  const keys=[...new Set(rows.map(r=>key(r[name])))].sort((a,b)=>{
+    if(a==='')return 1;
+    if(b==='')return -1;
+    if(o)return o.indexOf(a)-o.indexOf(b);
+    const x=Number(a),y=Number(b);
+    return isNaN(x)||isNaN(y)?a.localeCompare(b):x-y;
+  });
+  return {name,label:NAMES[name]||pretty(name),numeric,labels,codeLike,keys,min:numeric?Math.min(...nn):0};
+}
+
+function init(buf){
+  const wb=XLSX.read(buf,{type:'array'});
+  const n=wb.SheetNames;
+  rows=XLSX.utils.sheet_to_json(wb.Sheets[n[1]||n[0]],{defval:null});
+  if(!rows.length)throw new Error('The data sheet is empty.');
+  const dict=n.length>2?XLSX.utils.sheet_to_json(wb.Sheets[n[n.length-1]],{defval:null}):[];
+  const info={};
+  dict.forEach(r=>{if(r.Variable&&(!info[r.Variable]||/injury/i.test(r.Section)))info[r.Variable]=r;});
+  V={};
+  Object.keys(rows[0]).filter(c=>!/^Record_UID/.test(c)).forEach(c=>{V[c]=buildVar(c,info[c]);});
+  filters=[];
+  const vars=varOpts();
+  fill($('group'),vars,V.Sport?'Sport':vars[0][0]);
+  const ms=[['count','Number of injuries']];
+  Object.values(V).filter(v=>v.numeric).forEach(v=>{
+    ms.push(['avg:'+v.name,'Average '+v.label.toLowerCase()]);
+    ms.push(['sum:'+v.name,'Total '+v.label.toLowerCase()]);
+  });
+  fill($('measure'),ms,'count');
+  renderFilters();
+  $('status').hidden=true;
+  $('loader').hidden=true;
+  $('app').hidden=false;
+  draw();
+}
+
+function varOpts(){
+  return Object.values(V).sort((a,b)=>a.label.localeCompare(b.label)).map(v=>[v.name,v.label]);
+}
+
+function fill(s,opts,val){
+  s.innerHTML='';
+  opts.forEach(([v,t])=>{const o=document.createElement('option');o.value=v;o.textContent=t;s.append(o);});
+  s.value=val;
+}
+
+function sel(opts,val,fn){
+  const s=document.createElement('select');
+  fill(s,opts,val);
+  s.onchange=()=>fn(s.value);
+  return s;
+}
+
+function newFilter(name){
+  const vr=V[name];
+  return vr.numeric?{v:name,op:'>=',val:String(vr.min)}:{v:name,op:'is',val:vr.keys[0]};
+}
+
+function renderFilters(){
+  const box=$('filters');
+  box.innerHTML='';
+  $('none').hidden=filters.length>0;
+  filters.forEach((f,i)=>{
+    const vr=V[f.v];
+    const row=document.createElement('div');
+    row.className='frow';
+    row.append(sel(varOpts(),f.v,x=>{filters[i]=newFilter(x);renderFilters();draw();}));
+    row.append(sel(vr.numeric?OPS_NUM:OPS_CAT,f.op,x=>{f.op=x;draw();}));
+    if(vr.numeric){
+      const inp=document.createElement('input');
+      inp.type='number';
+      inp.value=f.val;
+      inp.oninput=()=>{f.val=inp.value;draw();};
+      row.append(inp);
+    }else{
+      row.append(sel(vr.keys.map(k=>[k,show(vr,k)]),f.val,x=>{f.val=x;draw();}));
+    }
+    const b=document.createElement('button');
+    b.textContent='Remove';
+    b.onclick=()=>{filters.splice(i,1);renderFilters();draw();};
+    row.append(b);
+    box.append(row);
+  });
+}
+
+function pass(r){
+  return filters.every(f=>{
+    const vr=V[f.v],raw=r[f.v];
+    if(vr.numeric){
+      if(f.val===''||isNaN(Number(f.val)))return true;
+      if(raw===null||raw==='')return false;
+      const x=Number(f.val);
+      return f.op==='='?raw===x:f.op==='>'?raw>x:f.op==='>='?raw>=x:f.op==='<'?raw<x:raw<=x;
+    }
+    return f.op==='is'?key(raw)===f.val:key(raw)!==f.val;
+  });
+}
+
+function describe(f){
+  const vr=V[f.v];
+  return vr.numeric?`${vr.label} ${SYM[f.op]} ${f.val===''?'?':f.val}`:`${vr.label} ${f.op==='is'?'is':'is not'} ${show(vr,f.val)}`;
+}
+
+const valueLabels={
+  id:'valueLabels',
+  afterDatasetsDraw(c){
+    if(c.config.type==='pie'||c.config.type==='doughnut')return;
+    const ctx=c.ctx,ds=c.data.datasets[0],horiz=c.options.indexAxis==='y';
+    ctx.save();
+    ctx.fillStyle='#1f2328';
+    ctx.font='12px system-ui,sans-serif';
+    c.getDatasetMeta(0).data.forEach((el,i)=>{
+      const v=ds.data[i];
+      if(v===null)return;
+      if(horiz){ctx.textAlign='left';ctx.textBaseline='middle';ctx.fillText(fmt(v),el.x+5,el.y);}
+      else{ctx.textAlign='center';ctx.textBaseline='bottom';ctx.fillText(fmt(v),el.x,el.y-5);}
+    });
+    ctx.restore();
+  }
+};
+
+function draw(){
+  if(chart){chart.destroy();chart=null;}
+  const g=V[$('group').value],mv=$('measure').value,type=$('type').value;
+  const [fn,col]=mv.split(':');
+  const sel=rows.filter(pass);
+  $('empty').hidden=sel.length>0;
+  $('chartwrap').hidden=sel.length===0;
+  if(!sel.length)return;
+
+  const agg=new Map(g.keys.map(k=>[k,{n:0,s:0,c:0}]));
+  sel.forEach(r=>{
+    const a=agg.get(key(r[g.name]));
+    a.n++;
+    if(col&&typeof r[col]==='number'){a.s+=r[col];a.c++;}
+  });
+  const pie=type==='pie'||type==='doughnut';
+  let items=[...agg].map(([k,a])=>({k,n:a.n,v:fn==='count'?a.n:fn==='sum'?a.s:(a.c?a.s/a.c:null)}));
+  items=items.filter(i=>i.n>0||(!pie&&g.keys.length<=15&&i.k!==''));
+  if(pie)items=items.filter(i=>i.v);
+  if($('sort').checked)items.sort((a,b)=>(b.v===null?-Infinity:b.v)-(a.v===null?-Infinity:a.v));
+
+  const mlabel=$('measure').selectedOptions[0].textContent;
+  let labels=items.map(i=>show(g,i.k));
+  const data=items.map(i=>i.v===null?null:Math.round(i.v*10)/10);
+  if(pie){
+    const total=data.reduce((a,b)=>a+b,0);
+    labels=labels.map((l,i)=>`${l}: ${fmt(data[i])} (${Math.round(data[i]/total*100)}%)`);
+  }
+
+  const sub=filters.length?filters.map((f,i)=>(i?'and ':'Where ')+describe(f)):['All records'];
+  sub.push('n = '+sel.length);
+
+  const horiz=type==='hbar';
+  const t=horiz?'bar':type;
+  const cat=horiz?'y':'x',val=horiz?'x':'y';
+  $('chartwrap').style.height=(horiz?Math.max(460,items.length*26+130):460)+'px';
+
+  const scales={};
+  if(!pie){
+    scales[cat]={title:{display:true,text:g.label}};
+    scales[val]={beginAtZero:true,title:{display:true,text:mlabel},ticks:fn==='count'?{precision:0}:{}};
+  }
+  chart=new Chart($('chart'),{
+    type:t,
+    data:{labels,datasets:[{
+      label:mlabel,
+      data,
+      backgroundColor:pie?items.map((_,i)=>PALETTE[i%PALETTE.length]):PALETTE[0],
+      borderColor:pie?'#fff':PALETTE[0],
+      borderWidth:pie?1:2,
+      tension:0,
+      pointRadius:4
+    }]},
+    options:{
+      indexAxis:horiz?'y':'x',
+      responsive:true,
+      maintainAspectRatio:false,
+      animation:false,
+      layout:{padding:{top:pie?0:22,right:pie?0:36}},
+      plugins:{
+        legend:{display:pie,position:'right',labels:{font:{size:13}}},
+        title:{display:true,text:`${mlabel} by ${g.label.toLowerCase()}`,font:{size:17}},
+        subtitle:{display:true,text:sub,font:{size:12},padding:{bottom:12}},
+        tooltip:{enabled:true}
+      },
+      scales
+    },
+    plugins:[valueLabels]
+  });
+}
+
+['group','measure','type','sort'].forEach(id=>$(id).addEventListener('change',draw));
+$('add').onclick=()=>{
+  filters.push(newFilter(V.Injury_or_Illness_Code?'Injury_or_Illness_Code':varOpts()[0][0]));
+  renderFilters();
+  draw();
+};
+
+function fail(e){
+  $('status').hidden=false;
+  $('status').textContent='Could not read the spreadsheet: '+e.message;
+}
+$('file').onchange=e=>{
+  const f=e.target.files[0];
+  if(!f)return;
+  f.arrayBuffer().then(b=>{try{init(b);}catch(err){fail(err);}});
+};
+fetch(DATA_FILE)
+  .then(r=>{if(!r.ok)throw new Error('missing');return r.arrayBuffer();})
+  .then(b=>{try{init(b);}catch(err){fail(err);}},()=>{$('status').hidden=true;$('loader').hidden=false;});
+</script>
+</body>
+</html>
