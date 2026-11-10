@@ -50,10 +50,6 @@ label.opt{flex-direction:row;align-items:center;gap:6px;font-size:14px;color:inh
 <main>
 <h1>Injury Data Explorer</h1>
 <p id="status">Loading data…</p>
-<section id="loader" hidden>
-<p>The data file could not be loaded automatically. Select the spreadsheet (.xlsx) to continue.</p>
-<input type="file" id="file" accept=".xlsx,.xls">
-</section>
 <div id="app" class="layout" hidden>
 <div class="col">
 <section>
@@ -177,7 +173,6 @@ function init(buf){
   renderGroupSel();
   renderFilters();
   $('status').hidden=true;
-  $('loader').hidden=true;
   $('app').hidden=false;
   draw();
 }
@@ -476,14 +471,10 @@ function fail(e){
   $('status').hidden=false;
   $('status').textContent='Could not read the spreadsheet: '+e.message;
 }
-$('file').onchange=e=>{
-  const f=e.target.files[0];
-  if(!f)return;
-  f.arrayBuffer().then(b=>{try{init(b);}catch(err){fail(err);}});
-};
-fetch(DATA_FILE)
-  .then(r=>{if(!r.ok)throw new Error('missing');return r.arrayBuffer();})
-  .then(b=>{try{init(b);}catch(err){fail(err);}},()=>{$('status').hidden=true;$('loader').hidden=false;});
+fetch(DATA_FILE,{cache:'no-cache'})
+  .then(r=>{if(!r.ok)throw new Error('HTTP '+r.status);return r.arrayBuffer();})
+  .then(b=>{try{init(b);}catch(err){fail(err);}},
+    e=>fail(new Error('could not find "'+DATA_FILE+'" next to this page ('+e.message+'). Make sure it is in the same folder as index.html in the repo, the name matches exactly, and the page is served over http(s) (GitHub Pages), not opened as a local file.')));
 </script>
 </body>
 </html>
